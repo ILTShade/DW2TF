@@ -28,19 +28,19 @@ def parse_net(num_layers, cfg, weights, training=False, const_inits=True, verbos
         layer_name = layer['name']
         counters.setdefault(layer_name, 0)
         counters[layer_name] += 1
-        scope = "{}{}{}".format(args.prefix, layer['name'], counters[layer_name])
+        scope = "{}{}{}".format(args.prefix, layer['name'][:4], counters[layer_name])
         net = get_cfg_layer(net, layer_name, layer, weights_walker, stack, output_index, scope,
-                            training=training, const_inits=const_inits, verbose=verbose)
+                            training = training, const_inits = const_inits, verbose = verbose)
         stack.append(net)
         if verbose:
             print(ith, net)
-
-    if verbose:        
+    if verbose:
         for ind in output_index:
             print("=> Output layer: ", stack[ind])
 
-
 def main(args):
+    if not os.path.exists(args.output):
+        os.mkdir(args.output)
     ckpt_path = os.path.join(args.output, os.path.splitext(os.path.split(args.cfg)[-1])[0] + ".ckpt")
     pb_path = os.path.join(args.output, os.path.splitext(os.path.split(args.cfg)[-1])[0] + ".pb")
 
@@ -49,31 +49,33 @@ def main(args):
     # weights as const initializers. This is not portable as
     # graph.pb or graph.meta is huge (contains weights).
     # ----------------------------------------------------------
-    tf.reset_default_graph()
+    tf.compat.v1.reset_default_graph()
     parse_net(args.layers, args.cfg, args.weights, args.training)
-    graph = tf.get_default_graph()
+    graph = tf.compat.v1.get_default_graph()
 
-    saver = tf.train.Saver(tf.global_variables())
-    with tf.Session(graph=graph) as sess:
-        sess.run(tf.global_variables_initializer())
+    saver = tf.compat.v1.train.Saver(tf.compat.v1.global_variables())
+    with tf.compat.v1.Session(graph = graph) as sess:
+        sess.run(tf.compat.v1.global_variables_initializer())
         saver.save(sess, ckpt_path, write_meta_graph=False)
 
     # ----------------------------------------------------------
     # Save .pb, .meta and final .ckpt by restoring weights
     # from previous .ckpt into the new (compact) graph.
     # ----------------------------------------------------------
-    tf.reset_default_graph()
-    parse_net(args.layers, args.cfg, args.weights, args.training, const_inits=False, verbose=False)
-    graph = tf.get_default_graph()
+    tf.compat.v1.reset_default_graph()
+    parse_net(args.layers, args.cfg, args.weights, args.training, const_inits = False, verbose = False)
+    graph = tf.compat.v1.get_default_graph()
 
-    with tf.gfile.GFile(pb_path, 'wb') as f:
-        f.write(graph.as_graph_def(add_shapes=True).SerializeToString())
+    if os.path.exists(pb_path):
+        os.remove(pb_path)
+    with tf.io.gfile.GFile(pb_path, 'wb') as f:
+        f.write(graph.as_graph_def(add_shapes = True).SerializeToString())
     print("Saved .pb to '{}'".format(pb_path))
 
-    with tf.Session(graph=graph) as sess:
+    with tf.compat.v1.Session(graph = graph) as sess:
         # Load weights (variables) from earlier .ckpt before saving out
         var_list = {}
-        reader = tf.train.NewCheckpointReader(ckpt_path)
+        reader = tf.compat.v1.train.NewCheckpointReader(ckpt_path)
         for key in reader.get_variable_to_shape_map():
             # Look for all variables in ckpt that are used by the graph
             try:
@@ -83,13 +85,15 @@ def main(args):
                 # 'global_step' or a similar housekeeping element) so skip it.
                 continue
             var_list[key] = tensor
-        saver = tf.train.Saver(var_list=var_list)
+        saver = tf.compat.v1.train.Saver(var_list = var_list)
         saver.restore(sess, ckpt_path)
 
-        saver.export_meta_graph(ckpt_path+'.meta', clear_devices=True, clear_extraneous_savers=True)
-        print("Saved .meta to '{}'".format(ckpt_path+'.meta'))
+        if os.path.exists(ckpt_path + '.meta'):
+            os.remove(ckpt_path + '.meta')
+        saver.export_meta_graph(ckpt_path + '.meta', clear_devices = True, clear_extraneous_savers = True)
+        print("Saved .meta to '{}'".format(ckpt_path + '.meta'))
 
-        saver.save(sess, ckpt_path, write_meta_graph=False)
+        saver.save(sess, ckpt_path, write_meta_graph = False)
         print("Saved .ckpt to '{}'".format(ckpt_path))
 
 
